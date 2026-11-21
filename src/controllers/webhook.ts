@@ -3,6 +3,14 @@ import { Prisma, type MessageType } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { verifySignature, getProfile } from "../lib/line.js";
 import { pushRecentEvent } from "../lib/recentEvents.js";
+import { messagePreview } from "../lib/messagePreview.js";
+import { conversationInclude, messageInclude } from "../lib/includes.js";
+import {
+  emitContactUpdated,
+  emitConversationUpdated,
+  emitMessageCreated,
+  emitMessageUpdated,
+} from "../lib/realtime.js";
 import type {
   LineEvent,
   LineMessageEvent,
@@ -25,41 +33,6 @@ const MEDIA_TYPES: readonly MessageType[] = ["image", "video", "audio", "file"];
 
 function isUniqueViolation(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
-}
-
-/** ข้อความสั้นๆ แสดงในรายการห้อง (ไม่เกิน 255 ตัวอักษร) */
-function preview(message: LineMessageEvent["message"]): string {
-  const str = (key: string) => {
-    const v = message[key];
-    return typeof v === "string" ? v : "";
-  };
-  let text: string;
-  switch (message.type) {
-    case "text":
-      text = message.text ?? "";
-      break;
-    case "image":
-      text = "[รูปภาพ]";
-      break;
-    case "video":
-      text = "[วิดีโอ]";
-      break;
-    case "audio":
-      text = "[ข้อความเสียง]";
-      break;
-    case "file":
-      text = `[ไฟล์] ${str("fileName")}`.trim();
-      break;
-    case "sticker":
-      text = "[สติกเกอร์]";
-      break;
-    case "location":
-      text = `[ตำแหน่ง] ${str("title") || str("address")}`.trim();
-      break;
-    default:
-      text = `[${String(message.type)}]`;
-  }
-  return text.slice(0, 255);
 }
 
 // ───────────────────────── webhook_events ─────────────────────────
@@ -117,10 +90,11 @@ async function markFailed(webhookEventId: string, err: unknown): Promise<void> {
 async function syncProfile(lineUserId: string): Promise<void> {
   try {
     const profile = await getProfile(lineUserId);
-    await prisma().contact.update({
+    const contact = await prisma().contact.update({
       where: { lineUserId },
       data: { displayName: profile.displayName, pictureUrl: profile.pictureUrl ?? null },
     });
+    emitContactUpdated(contact);
   } catch (err) {
     console.warn("[line webhook] syncProfile failed", lineUserId, err);
   }
@@ -140,21 +114,29 @@ async function handleMessage(event: LineMessageEvent): Promise<HandleResult> {
 
   const sentAt = new Date(event.timestamp);
 
-  const contact = await prisma().$transaction(async (tx) => {
-    const contact = await tx.contact.upsert({
-      where: { lineUserId: userId },
-      create: { lineUserId: userId },
-      update: {},
-    });
+  let result;
+  try {
+    result = await prisma().$transaction(async (tx) => {
+      // ข้อความนี้บันทึกไปแล้ว (รอบก่อนบันทึกได้แต่ mark processed ไม่ทัน) → ไม่ทำซ้ำ
+      const existing = await tx.message.findUnique({
+        where: { webhookEventId: event.webhookEventId },
+        select: { id: true },
+      });
+      if (existing) return null;
 
-    const conversation = await tx.conversation.upsert({
-      where: { contactId: contact.id },
-      create: { contactId: contact.id },
-      update: {},
-    });
+      const contact = await tx.contact.upsert({
+        where: { lineUserId: userId },
+        create: { lineUserId: userId },
+        update: {},
+      });
 
-    try {
-      await tx.message.create({
+      const conversation = await tx.conversation.upsert({
+        where: { contactId: contact.id },
+        create: { contactId: contact.id },
+        update: {},
+      });
+
+      const message = await tx.message.create({
         data: {
           conversationId: conversation.id,
           direction: "in",
@@ -166,29 +148,35 @@ async function handleMessage(event: LineMessageEvent): Promise<HandleResult> {
           mediaStatus: MEDIA_TYPES.includes(type) ? "pending" : null,
           createdAt: sentAt,
         },
+        include: messageInclude,
       });
-    } catch (err) {
-      // webhook_event_id ซ้ำ = ข้อความนี้บันทึกไปแล้ว → ถือว่าสำเร็จ
-      if (isUniqueViolation(err)) return contact;
-      throw err;
-    }
 
-    await tx.conversation.update({
-      where: { id: conversation.id },
-      data: {
-        lastMessageAt: sentAt,
-        lastMessagePreview: preview(event.message),
-        unreadCount: { increment: 1 },
-        status: "open", // ห้องที่ปิด/รออยู่ถูกเปิดกลับเมื่อลูกค้าทักมา
-      },
+      const updatedConversation = await tx.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          lastMessageAt: sentAt,
+          lastMessagePreview: messagePreview(type, event.message.text, event.message),
+          unreadCount: { increment: 1 },
+          status: "open", // ห้องที่ปิด/รออยู่ถูกเปิดกลับเมื่อลูกค้าทักมา
+        },
+        include: conversationInclude,
+      });
+
+      return { message, conversation: updatedConversation };
     });
+  } catch (err) {
+    // request ซ้อนกันบันทึกข้อความเดียวกันพร้อมกัน → อีกตัวทำไปแล้ว ถือว่าสำเร็จ
+    if (isUniqueViolation(err)) return {};
+    throw err;
+  }
+  if (!result) return {};
 
-    return contact;
-  });
+  // หลัง commit แล้วเท่านั้น → แจ้งหน้าแอดมิน
+  emitMessageCreated(result.conversation.id, result.message);
+  emitConversationUpdated(result.conversation);
 
   // TODO: ไฟล์แนบ (media_status = pending) → getMessageContent แล้วเก็บลง storage
-  // TODO: แจ้ง realtime → message.created
-  return { syncProfileOf: contact.displayName ? undefined : userId };
+  return { syncProfileOf: result.conversation.contact.displayName ? undefined : userId };
 }
 
 async function handleFollow(event: LineEvent): Promise<HandleResult> {
@@ -196,29 +184,42 @@ async function handleFollow(event: LineEvent): Promise<HandleResult> {
   if (event.source.type !== "user" || !userId) return {};
   const at = new Date(event.timestamp);
 
-  await prisma().contact.upsert({
+  const contact = await prisma().contact.upsert({
     where: { lineUserId: userId },
     create: { lineUserId: userId, isFollowing: true, followedAt: at },
     update: { isFollowing: true, followedAt: at, unfollowedAt: null },
   });
+  emitContactUpdated(contact);
   return { syncProfileOf: userId };
 }
 
 async function handleUnfollow(event: LineEvent): Promise<HandleResult> {
   const userId = event.source.userId;
   if (!userId) return {};
-  await prisma().contact.updateMany({
-    where: { lineUserId: userId },
+  const contact = await prisma().contact.findUnique({ where: { lineUserId: userId } });
+  if (!contact) return {}; // ไม่เคยรู้จักลูกค้าคนนี้ ไม่ต้องสร้าง
+
+  const updated = await prisma().contact.update({
+    where: { id: contact.id },
     data: { isFollowing: false, unfollowedAt: new Date(event.timestamp) },
   });
+  emitContactUpdated(updated);
   return {};
 }
 
 async function handleUnsend(event: LineUnsendEvent): Promise<HandleResult> {
-  await prisma().message.updateMany({
+  const targets = await prisma().message.findMany({
     where: { lineMessageId: event.unsend.messageId, direction: "in" },
-    data: { isUnsent: true },
+    select: { id: true },
   });
+  for (const { id } of targets) {
+    const message = await prisma().message.update({
+      where: { id },
+      data: { isUnsent: true },
+      include: messageInclude,
+    });
+    emitMessageUpdated(message.conversationId, message);
+  }
   return {};
 }
 
@@ -245,7 +246,14 @@ async function handleEvent(event: LineEvent): Promise<HandleResult> {
  */
 export async function lineWebhook(req: Request, res: Response) {
   const rawBody = req.body as Buffer;
-  if (!Buffer.isBuffer(rawBody) || !verifySignature(rawBody, req.header("x-line-signature"))) {
+  const signature = req.header("x-line-signature");
+  if (!Buffer.isBuffer(rawBody) || !verifySignature(rawBody, signature)) {
+    console.warn("[line webhook] invalid signature", {
+      hasSignature: Boolean(signature),
+      isBuffer: Buffer.isBuffer(rawBody),
+      bodyLength: Buffer.isBuffer(rawBody) ? rawBody.length : null,
+      contentType: req.header("content-type"),
+    });
     return res.status(401).json({ error: "invalid signature" });
   }
 

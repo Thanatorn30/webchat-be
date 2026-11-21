@@ -1,7 +1,8 @@
 import "dotenv/config";
 
 function required(name: string): string {
-  const value = process.env[name];
+  // trim — กันช่องว่าง/ขึ้นบรรทัดใหม่ที่ติดมาตอน copy ใส่ Render (ทำให้ signature ไม่ตรง)
+  const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing env: ${name}`);
   return value;
 }

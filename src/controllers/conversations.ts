@@ -1,6 +1,8 @@
 import type { Request, Response } from "express";
 import { Prisma, ConversationStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { conversationInclude } from "../lib/includes.js";
+import { emitConversationUpdated } from "../lib/realtime.js";
 
 const STATUSES = Object.values(ConversationStatus) as string[];
 const UUID_RE =
@@ -8,11 +10,8 @@ const UUID_RE =
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 
-// ข้อมูลที่แนบไปกับห้องแชตทุกครั้ง
-const include = {
-  contact: true,
-  assignedAdmin: { select: { id: true, name: true, email: true, role: true } },
-} satisfies Prisma.ConversationInclude;
+// ข้อมูลที่แนบไปกับห้องแชตทุกครั้ง (ใช้ร่วมกับ realtime)
+const include = conversationInclude;
 
 type ConversationInput = {
   contactId?: string;
@@ -204,6 +203,7 @@ export async function updateConversation(req: Request, res: Response) {
       data: parsed.data,
       include,
     });
+    emitConversationUpdated(conversation);
     res.json(conversation);
   } catch (err) {
     handlePrismaError(err, res);
@@ -221,6 +221,7 @@ export async function markConversationRead(req: Request, res: Response) {
       data: { unreadCount: 0 },
       include,
     });
+    emitConversationUpdated(conversation);
     res.json(conversation);
   } catch (err) {
     handlePrismaError(err, res);
