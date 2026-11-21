@@ -10,8 +10,5 @@ messagesRouter.use(requireAuth);
 /** GET /api/messages/:messageId */
 messagesRouter.get("/:messageId", getMessage);
 
-/** POST /api/messages/:messageId/retry — ส่งซ้ำข้อความที่ส่งไม่สำเร็จ */
-messagesRouter.post("/:messageId/retry", retryMessage);
-
 /** DELETE /api/messages/:messageId — ลบออกจาก DB (owner เท่านั้น) */
 messagesRouter.delete("/:messageId", requireRole("owner"), deleteMessage);

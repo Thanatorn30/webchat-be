@@ -1,10 +1,5 @@
 import type { LineEvent } from "../types/line.js";
 
-/**
- * เก็บ event ล่าสุดจาก webhook ไว้ในหน่วยความจำ (ไม่ลง DB)
- * - เก็บแค่ MAX_EVENTS ตัวล่าสุด
- * - server restart / Render sleep → หายหมด
- */
 const MAX_EVENTS = 100;
 
 export interface RecentEvent {

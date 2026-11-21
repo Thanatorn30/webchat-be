@@ -80,11 +80,6 @@ async function deliver(messageId: string, lineUserId: string, text: string, retr
 
 // ───────────────────────── Read ─────────────────────────
 
-/**
- * GET /api/conversations/:id/messages?before=<messageId>&limit=50
- * ตอบ { items, nextBefore } — items เรียงเก่า → ใหม่ (เอาไปแสดงได้เลย)
- * โหลดข้อความเก่ากว่านี้: ส่ง ?before=<nextBefore> / nextBefore = null แปลว่าหมดแล้ว
- */
 export async function listMessages(req: Request, res: Response) {
   const conversationId = getUuid(req, res, "id");
   if (!conversationId) return;
@@ -131,14 +126,14 @@ export async function listMessages(req: Request, res: Response) {
     const page = hasMore ? rows.slice(0, limit) : rows;
     res.json({
       items: page.reverse(),
-      nextBefore: hasMore ? page[0].id : null, // page ถูก reverse แล้ว → [0] คือเก่าสุด
+      nextBefore: hasMore ? page[0].id : null, 
     });
   } catch (err) {
     handlePrismaError(err, res);
   }
 }
 
-/** GET /api/messages/:messageId */
+
 export async function getMessage(req: Request, res: Response) {
   const id = getUuid(req, res, "messageId");
   if (!id) return;
@@ -154,13 +149,6 @@ export async function getMessage(req: Request, res: Response) {
 
 // ───────────────────────── Create ─────────────────────────
 
-/**
- * POST /api/conversations/:id/messages — { text } แอดมินส่งข้อความ (text อย่างเดียวตอนนี้)
- * 1. ลูกค้าบล็อก OA (is_following = false) → 409
- * 2. INSERT messages (out, send_status = queued, retry_key ใหม่) + อัปเดตสรุปห้อง
- * 3. pushMessage → sent / failed
- * ตอบ 201 พร้อม message เสมอ — ส่งไม่สำเร็จดูที่ sendStatus = "failed" (ส่งซ้ำได้ที่ /retry)
- */
 export async function sendMessage(req: Request, res: Response) {
   const conversationId = getUuid(req, res, "id");
   if (!conversationId) return;
@@ -219,11 +207,6 @@ export async function sendMessage(req: Request, res: Response) {
 
 // ───────────────────────── Update ─────────────────────────
 
-/**
- * POST /api/messages/:messageId/retry — ส่งซ้ำข้อความ out ที่ send_status = failed
- * ใช้ retry_key เดิม → LINE ไม่ส่งเบิ้ลถ้ารอบก่อนจริงๆ ส่งไปแล้ว
- * (LINE แก้ไขข้อความที่ส่งไปแล้วไม่ได้ จึงไม่มี PATCH เนื้อหาข้อความ)
- */
 export async function retryMessage(req: Request, res: Response) {
   const id = getUuid(req, res, "messageId");
   if (!id) return;
@@ -263,10 +246,6 @@ export async function retryMessage(req: Request, res: Response) {
 
 // ───────────────────────── Delete ─────────────────────────
 
-/**
- * DELETE /api/messages/:messageId — ลบออกจาก DB ของเราเท่านั้น
- * (ข้อความที่ส่งถึงลูกค้าแล้ว LINE ไม่มี API ให้ลบ/ยกเลิก — ลูกค้ายังเห็นอยู่)
- */
 export async function deleteMessage(req: Request, res: Response) {
   const id = getUuid(req, res, "messageId");
   if (!id) return;

@@ -13,6 +13,4 @@ export const adminsRouter = Router();
 adminsRouter.use(requireAuth, requireRole("owner"));
 
 adminsRouter.get("/", listAdmins);
-adminsRouter.get("/:id", getAdmin);
-adminsRouter.patch("/:id", updateAdmin);
-adminsRouter.delete("/:id", deleteAdmin);
+

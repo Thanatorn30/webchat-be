@@ -163,10 +163,6 @@ export async function getConversation(req: Request, res: Response) {
   }
 }
 
-/**
- * POST /api/conversations — { contactId, status?, assignedAdminId? }
- * ปกติห้องถูกสร้างจาก webhook อัตโนมัติ เส้นนี้ไว้สร้างเอง (1 contact มีได้ 1 ห้อง → ซ้ำได้ 409)
- */
 export async function createConversation(req: Request, res: Response) {
   const parsed = parseBody(req.body, false);
   if ("error" in parsed) return res.status(400).json({ error: parsed.error });

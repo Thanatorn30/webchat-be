@@ -4,13 +4,11 @@ import type { Prisma } from "@prisma/client";
 
 const adminPublic = { select: { id: true, name: true, email: true, role: true } } as const;
 
-/** แนบไปกับห้องแชตทุกครั้ง (GET /api/conversations, event conversation.updated) */
 export const conversationInclude = {
   contact: true,
   assignedAdmin: adminPublic,
 } satisfies Prisma.ConversationInclude;
 
-/** แนบไปกับข้อความทุกครั้ง (GET .../messages, event message.*) */
 export const messageInclude = {
   senderAdmin: adminPublic,
 } satisfies Prisma.MessageInclude;

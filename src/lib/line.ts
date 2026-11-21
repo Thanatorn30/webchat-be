@@ -46,10 +46,7 @@ export type PushResult =
   | { ok: false; status: number; retryable: boolean; error: string };
 
 /**
- * POST /v2/bot/message/push พร้อม X-Line-Retry-Key
- * - 200 → ส่งแล้ว
- * - 409 → retry key นี้ LINE รับไปแล้ว ถือว่าส่งแล้ว
- * - 429 / 5xx → retry ได้ด้วย key เดิม
+ * POST /v2/bot/message/push
  */
 export async function pushMessage(to: string, messages: unknown[], retryKey: string): Promise<PushResult> {
   const res = await fetch(`${API}/v2/bot/message/push`, {
