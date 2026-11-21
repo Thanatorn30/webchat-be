@@ -1,5 +1,6 @@
 import express, { Router } from "express";
 import { verifySignature } from "../lib/line.js";
+import { pushRecentEvent } from "../lib/recentEvents.js";
 import type { LineWebhookBody } from "../types/line.js";
 
 export const webhookRouter = Router();
@@ -18,6 +19,9 @@ webhookRouter.post("/", express.raw({ type: "*/*" }), async (req, res) => {
   const body = JSON.parse(rawBody.toString("utf8")) as LineWebhookBody;
 
   for (const event of body.events) {
+    pushRecentEvent(event); // เก็บในหน่วยความจำให้ FE ดึงดูผ่าน GET /api/line/events
+    console.log("[line webhook]", JSON.stringify(event));
+
     // TODO 1: INSERT webhook_events ON CONFLICT DO NOTHING → ถ้าชน (เคยได้แล้ว) ให้ข้าม
     // TODO 2: แยกตาม event.type
     //   message  → upsert contacts + conversations, INSERT messages (direction='in')
