@@ -24,9 +24,4 @@ export interface LineMessageEvent extends LineEventBase {
   };
 }
 
-export interface LineUnsendEvent extends LineEventBase {
-  type: "unsend";
-  unsend: { messageId: string };
-}
-
-export type LineEvent = LineMessageEvent | LineUnsendEvent | LineEventBase;
+export type LineEvent = LineMessageEvent | LineEventBase;

@@ -6,7 +6,6 @@ const adminPublic = { select: { id: true, name: true, email: true, role: true } 
 
 export const conversationInclude = {
   contact: true,
-  assignedAdmin: adminPublic,
 } satisfies Prisma.ConversationInclude;
 
 export const messageInclude = {

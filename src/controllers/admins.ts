@@ -150,7 +150,7 @@ export async function updateAdmin(req: Request, res: Response) {
 
 /**
  * DELETE /api/admins/:id
- * ห้องแชต/ข้อความที่ผูกกับแอดมินคนนี้ยังอยู่ — assigned_admin_id / sender_admin_id จะเป็น NULL
+ * ข้อความที่แอดมินคนนี้ส่งยังอยู่ — sender_admin_id จะเป็น NULL
  */
 export async function deleteAdmin(req: Request, res: Response) {
   const id = getId(req, res);

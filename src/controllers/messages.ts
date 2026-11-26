@@ -74,6 +74,7 @@ async function deliver(messageId: string, lineUserId: string, text: string, retr
       : { sendStatus: "failed", sendError: `${result.status}: ${result.error}`.slice(0, 2000) },
     include,
   });
+  // web socket
   emitMessageUpdated(message.conversationId, message);
   return message;
 }

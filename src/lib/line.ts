@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import { env } from "../config/env.js";
 
 const API = "https://api.line.me";
-const API_DATA = "https://api-data.line.me";
 
 /** ตรวจ x-line-signature จาก raw body (ต้องเป็น body ก่อน parse JSON) */
 export function verifySignature(rawBody: Buffer, signature: string | undefined): boolean {
@@ -27,18 +26,6 @@ export async function getProfile(userId: string) {
   });
   if (!res.ok) throw new Error(`getProfile ${res.status}`);
   return (await res.json()) as { userId: string; displayName: string; pictureUrl?: string };
-}
-
-/** GET api-data.line.me/v2/bot/message/{messageId}/content — ไฟล์รูป/วิดีโอ/เสียง/ไฟล์ */
-export async function getMessageContent(messageId: string) {
-  const res = await fetch(`${API_DATA}/v2/bot/message/${encodeURIComponent(messageId)}/content`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(`getMessageContent ${res.status}`);
-  return {
-    contentType: res.headers.get("content-type") ?? "application/octet-stream",
-    body: Buffer.from(await res.arrayBuffer()),
-  };
 }
 
 export type PushResult =
