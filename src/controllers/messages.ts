@@ -8,7 +8,6 @@ import { conversationInclude, messageInclude } from "../lib/includes.js";
 import {
   emitConversationUpdated,
   emitMessageCreated,
-  emitMessageDeleted,
   emitMessageUpdated,
 } from "../lib/realtime.js";
 
@@ -40,47 +39,12 @@ function handlePrismaError(err: unknown, res: Response): void {
   res.status(500).json({ error: "internal error" });
 }
 
-/** อัปเดตสรุปห้องจากข้อความล่าสุดที่เหลืออยู่ (ใช้หลังส่ง/ลบ) */
-async function refreshConversationSummary(
-  tx: Prisma.TransactionClient,
-  conversationId: string,
-) {
-  const last = await tx.message.findFirst({
-    where: { conversationId },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    select: { type: true, text: true, payload: true, createdAt: true },
-  });
-  return tx.conversation.update({
-    where: { id: conversationId },
-    data: {
-      lastMessageAt: last?.createdAt ?? null,
-      lastMessagePreview: last ? messagePreview(last.type, last.text, last.payload) : null,
-    },
-    include: conversationInclude,
-  });
-}
 
-/** push ข้อความ out ไป LINE แล้วอัปเดต send_status (ใช้ทั้งตอนส่งครั้งแรกและส่งซ้ำ) */
-async function deliver(messageId: string, lineUserId: string, text: string, retryKey: string) {
-  const result = await pushMessage(lineUserId, [{ type: "text", text }], retryKey);
-  const message = await prisma().message.update({
-    where: { id: messageId },
-    data: result.ok
-      ? {
-          sendStatus: "sent",
-          sendError: null,
-          lineMessageId: result.sentMessageIds[0] ?? undefined,
-        }
-      : { sendStatus: "failed", sendError: `${result.status}: ${result.error}`.slice(0, 2000) },
-    include,
-  });
-  // web socket
-  emitMessageUpdated(message.conversationId, message);
-  return message;
-}
 
-// ───────────────────────── Read ─────────────────────────
 
+
+
+// ---- ดึงรายการ message -------
 export async function listMessages(req: Request, res: Response) {
   const conversationId = getUuid(req, res, "id");
   if (!conversationId) return;
@@ -134,21 +98,35 @@ export async function listMessages(req: Request, res: Response) {
   }
 }
 
-
-export async function getMessage(req: Request, res: Response) {
-  const id = getUuid(req, res, "messageId");
-  if (!id) return;
-
-  try {
-    const message = await prisma().message.findUnique({ where: { id }, include });
-    if (!message) return res.status(404).json({ error: "message not found" });
-    res.json(message);
-  } catch (err) {
-    handlePrismaError(err, res);
-  }
-}
-
 // ───────────────────────── Create ─────────────────────────
+
+/** push ข้อความ out ไป LINE แล้วอัปเดต send_status */
+async function deliver(messageId: string, lineUserId: string, text: string, retryKey: string) {
+  const result = await pushMessage(lineUserId, [{ type: "text", text }], retryKey);
+  // update flag สถานะการส่ง
+  let data: Prisma.MessageUpdateInput;
+  if (result.ok) {
+    data = {
+      sendStatus: "sent",
+      sendError: null,
+      lineMessageId: result.sentMessageIds[0] ?? undefined,
+    };
+  } else {
+    data = {
+      sendStatus: "failed",
+      sendError: `${result.status}: ${result.error}`.slice(0, 2000),
+    };
+  }
+
+  const message = await prisma().message.update({
+    where: { id: messageId },
+    data,
+    include,
+  });
+  // web socket
+  emitMessageUpdated(message.conversationId, message);
+  return message;
+}
 
 export async function sendMessage(req: Request, res: Response) {
   const conversationId = getUuid(req, res, "id");
@@ -165,7 +143,9 @@ export async function sendMessage(req: Request, res: Response) {
       where: { id: conversationId },
       include: { contact: { select: { lineUserId: true, isFollowing: true } } },
     });
+    // เช็คว่ามีห้องไหม
     if (!conversation) return res.status(404).json({ error: "conversation not found" });
+    // เช็คว่าถูก blog ไหม
     if (!conversation.contact.isFollowing) {
       return res.status(409).json({ error: "contact has blocked the official account" });
     }
@@ -195,73 +175,12 @@ export async function sendMessage(req: Request, res: Response) {
       return { created: message, updatedConversation };
     });
 
-    // แจ้งแอดมินทุกคนว่ามีข้อความ (queued) — ผลการส่งตามมาเป็น message.updated (ใน deliver)
+    // websoket
     emitMessageCreated(conversationId, created);
     emitConversationUpdated(updatedConversation);
 
     const message = await deliver(created.id, conversation.contact.lineUserId, text, retryKey);
     res.status(201).json(message);
-  } catch (err) {
-    handlePrismaError(err, res);
-  }
-}
-
-// ───────────────────────── Update ─────────────────────────
-
-export async function retryMessage(req: Request, res: Response) {
-  const id = getUuid(req, res, "messageId");
-  if (!id) return;
-
-  try {
-    const message = await prisma().message.findUnique({
-      where: { id },
-      include: { conversation: { include: { contact: true } } },
-    });
-    if (!message) return res.status(404).json({ error: "message not found" });
-    if (message.direction !== "out" || message.sendStatus !== "failed") {
-      return res.status(409).json({ error: "only failed outgoing messages can be retried" });
-    }
-    if (!message.conversation.contact.isFollowing) {
-      return res.status(409).json({ error: "contact has blocked the official account" });
-    }
-
-    const retryKey = message.retryKey ?? crypto.randomUUID();
-    const queued = await prisma().message.update({
-      where: { id },
-      data: { sendStatus: "queued", sendError: null, retryKey },
-      include,
-    });
-    emitMessageUpdated(queued.conversationId, queued);
-
-    const updated = await deliver(
-      id,
-      message.conversation.contact.lineUserId,
-      message.text ?? "",
-      retryKey,
-    );
-    res.json(updated);
-  } catch (err) {
-    handlePrismaError(err, res);
-  }
-}
-
-// ───────────────────────── Delete ─────────────────────────
-
-export async function deleteMessage(req: Request, res: Response) {
-  const id = getUuid(req, res, "messageId");
-  if (!id) return;
-
-  try {
-    const conversation = await prisma().$transaction(async (tx) => {
-      const message = await tx.message.delete({
-        where: { id },
-        select: { conversationId: true },
-      });
-      return refreshConversationSummary(tx, message.conversationId);
-    });
-    emitMessageDeleted(conversation.id, id);
-    emitConversationUpdated(conversation);
-    res.status(204).end();
   } catch (err) {
     handlePrismaError(err, res);
   }

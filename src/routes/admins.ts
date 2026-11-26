@@ -1,10 +1,5 @@
 import { Router } from "express";
-import {
-  listAdmins,
-  getAdmin,
-  updateAdmin,
-  deleteAdmin,
-} from "../controllers/admins.js";
+import { listAdmins } from "../controllers/admins.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
 export const adminsRouter = Router();

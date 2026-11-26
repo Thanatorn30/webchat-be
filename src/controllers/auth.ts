@@ -103,8 +103,3 @@ export async function login(req: Request, res: Response) {
     res.status(500).json({ error: "internal error" });
   }
 }
-
-/** GET /api/auth/me — ข้อมูลแอดมินที่ login อยู่ (ต้องผ่าน requireAuth) */
-export function me(req: Request, res: Response) {
-  res.json({ admin: req.admin });
-}

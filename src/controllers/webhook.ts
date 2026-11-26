@@ -2,7 +2,6 @@ import type { Request, Response } from "express";
 import { Prisma, type MessageType } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { verifySignature, getProfile } from "../lib/line.js";
-import { pushRecentEvent } from "../lib/recentEvents.js";
 import { messagePreview } from "../lib/messagePreview.js";
 import { conversationInclude, messageInclude } from "../lib/includes.js";
 import {
@@ -33,7 +32,7 @@ function directUserId(event: LineEvent): string | null {
 
 // ───────────────────────── contacts (async) ─────────────────────────
 
-/** ดึงชื่อ/รูปจาก LINE แล้วอัปเดต contacts — เรียกหลังตอบ 200 แล้ว, พังได้ไม่เป็นไร */
+/** ดึงชื่อ/รูปจาก LINE แล้วอัปเดต contacts */
 async function syncProfile(lineUserId: string): Promise<void> {
   try {
     const profile = await getProfile(lineUserId);
@@ -113,7 +112,7 @@ async function saveIncomingMessage(event: LineMessageEvent, userId: string) {
   }
 }
 
-/** ลูกค้าส่งข้อความมา */
+/** เข็ค + create ข้อความที่ลูกค้าส่งมา + websocket */
 async function handleMessage(event: LineMessageEvent): Promise<HandleResult> {
   const userId = directUserId(event);
   if (!userId) return {}; // ไม่รองรับกลุ่ม/ห้อง
@@ -131,22 +130,7 @@ async function handleMessage(event: LineMessageEvent): Promise<HandleResult> {
   return { syncProfileOf: saved.conversation.contact.displayName ? undefined : userId };
 }
 
-/** ลูกค้าแอดเพื่อน / เลิกบล็อก */
-async function handleFollow(event: LineEvent): Promise<HandleResult> {
-  const userId = directUserId(event);
-  if (!userId) return {};
-
-  const contact = await prisma().contact.upsert({
-    where: { lineUserId: userId },
-    create: { lineUserId: userId, isFollowing: true },
-    update: { isFollowing: true },
-  });
-  // web socket
-  emitContactUpdated(contact);
-  return { syncProfileOf: userId };
-}
-
-/** ลูกค้าบล็อก OA */
+/** ประเภทการ follow (เอาไว้สร้าง flag เพื่อเช็คตอนส่งข้อความหา User) */
 async function handleUnfollow(event: LineEvent): Promise<HandleResult> {
   const userId = event.source.userId;
   if (!userId) return {};
@@ -163,29 +147,20 @@ async function handleUnfollow(event: LineEvent): Promise<HandleResult> {
   return {};
 }
 
-/** ส่ง event ไปให้ handler ตามชนิด */
+/** แยกประเภทของ event */
 async function handleEvent(event: LineEvent): Promise<HandleResult> {
   switch (event.type) {
     case "message":
       return handleMessage(event as LineMessageEvent);
-    case "follow":
-      return handleFollow(event);
     case "unfollow":
       return handleUnfollow(event);
     default:
-      return {}; // unsend / postback / join / ฯลฯ — ไม่ทำอะไร
+      return {}; // follow / unsend / postback / join / ฯลฯ — ไม่ทำอะไร
   }
 }
 
-/**
- * ทำ event เดียวให้จบ — event หนึ่งพังไม่ทำให้ event อื่นพังตาม
- * LINE ส่ง event ซ้ำได้: ข้อความกันซ้ำด้วย messages.webhook_event_id, follow/unfollow ทำซ้ำได้ผลเท่าเดิม
- * คืน lineUserId ที่ควรดึงโปรไฟล์ (ถ้ามี)
- */
+// ---- ใช้ try catch เพื่อให้ทำเสร็จทีละ event ------
 async function processEvent(event: LineEvent): Promise<string | undefined> {
-  pushRecentEvent(event); // ให้ GET /api/line/events ดูได้
-  console.log("[line webhook]", event.type, event.webhookEventId);
-
   try {
     return (await handleEvent(event)).syncProfileOf;
   } catch (err) {
@@ -211,11 +186,9 @@ function hasValidSignature(req: Request): boolean {
   return false;
 }
 
-/**
- * POST /api/line/webhook
- * req.body ต้องเป็น Buffer (express.raw) เพื่อตรวจ signature
- */
+// ------ Webhook ของ LINE ------------
 export async function lineWebhook(req: Request, res: Response) {
+
   if (!hasValidSignature(req)) {
     return res.status(401).json({ error: "invalid signature" });
   }
@@ -232,7 +205,6 @@ export async function lineWebhook(req: Request, res: Response) {
     const userId = await processEvent(event);
     if (userId) profilesToSync.add(userId);
   }
-
   res.sendStatus(200);
 
   // งานที่เรียก LINE API ทำหลังตอบ 200

@@ -11,18 +11,6 @@ const MAX_LIMIT = 100;
 // ข้อมูลที่แนบไปกับห้องแชตทุกครั้ง (ใช้ร่วมกับ realtime)
 const include = conversationInclude;
 
-// validate ค่าจาก body ตอนสร้างห้อง (1 contact = 1 ห้อง)
-function parseBody(body: Record<string, unknown>): { contactId: string } | { error: string } {
-  if (typeof body !== "object" || body === null) {
-    return { error: "body must be a JSON object" };
-  }
-  const { contactId } = body;
-  if (typeof contactId !== "string" || !UUID_RE.test(contactId)) {
-    return { error: "contactId is required and must be a uuid" };
-  }
-  return { contactId };
-}
-
 // เช็ค Id
 function getId(req: Request, res: Response): string | undefined {
   const id = String(req.params.id);
@@ -35,15 +23,6 @@ function getId(req: Request, res: Response): string | undefined {
 
 function handlePrismaError(err: unknown, res: Response): void {
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    if (err.code === "P2002") {
-      res.status(409).json({ error: "conversation for this contact already exists" });
-      return;
-    }
-    if (err.code === "P2003") {
-      // foreign key ไม่เจอ — contactId ไม่มีอยู่จริง
-      res.status(400).json({ error: "contact not found" });
-      return;
-    }
     if (err.code === "P2025") {
       res.status(404).json({ error: "conversation not found" });
       return;
@@ -91,38 +70,6 @@ export async function listConversations(req: Request, res: Response) {
     const hasMore = rows.length > limit;
     const items = hasMore ? rows.slice(0, limit) : rows;
     res.json({ items, nextCursor: hasMore ? items[items.length - 1].id : null });
-  } catch (err) {
-    handlePrismaError(err, res);
-  }
-}
-
-/** GET /api/conversations/:id */
-export async function getConversation(req: Request, res: Response) {
-  const id = getId(req, res);
-  if (!id) return;
-
-  try {
-    const conversation = await prisma().conversation.findUnique({
-      where: { id },
-      include,
-    });
-    if (!conversation) return res.status(404).json({ error: "conversation not found" });
-    res.json(conversation);
-  } catch (err) {
-    handlePrismaError(err, res);
-  }
-}
-
-export async function createConversation(req: Request, res: Response) {
-  const parsed = parseBody(req.body);
-  if ("error" in parsed) return res.status(400).json({ error: parsed.error });
-
-  try {
-    const conversation = await prisma().conversation.create({
-      data: { contactId: parsed.contactId },
-      include,
-    });
-    res.status(201).json(conversation);
   } catch (err) {
     handlePrismaError(err, res);
   }

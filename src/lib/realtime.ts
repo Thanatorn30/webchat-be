@@ -64,10 +64,6 @@ export function emitMessageUpdated(conversationId: string, message: Message): vo
   io?.to(ADMINS_ROOM).emit("message.updated", { conversationId, message });
 }
 
-export function emitMessageDeleted(conversationId: string, messageId: string): void {
-  io?.to(ADMINS_ROOM).emit("message.deleted", { conversationId, messageId });
-}
-
 export function emitConversationUpdated(conversation: ConversationWithRelations): void {
   io?.to(ADMINS_ROOM).emit("conversation.updated", { conversation });
 }

@@ -1,8 +1,6 @@
 import { Router } from "express";
 import {
   listConversations,
-  getConversation,
-  createConversation,
   deleteConversation,
 } from "../controllers/conversations.js";
 import { listMessages, sendMessage } from "../controllers/messages.js";
@@ -15,12 +13,6 @@ conversationsRouter.use(requireAuth);
 
 /** GET /api/conversations?cursor=&limit=30 — รายการห้อง เรียงตาม last_message_at */
 conversationsRouter.get("/", listConversations);
-
-/** POST /api/conversations — { contactId } */
-conversationsRouter.post("/", createConversation);
-
-/** GET /api/conversations/:id */
-conversationsRouter.get("/:id", getConversation);
 
 /** DELETE /api/conversations/:id — ลบห้อง + ข้อความทั้งหมด (owner เท่านั้น) */
 conversationsRouter.delete("/:id", requireRole("owner"), deleteConversation);
